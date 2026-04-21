@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import re
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -195,6 +196,43 @@ def analyze_parsing(path: Path) -> dict[str, int]:
         "failed_lines": failed_lines,
     }
 
+def analyze_basic_stats(path: Path, top_limit: int = 10) -> dict[str, object]:
+    total_lines = 0
+    parsed_lines = 0
+    failed_lines = 0
+
+    status_counter: Counter[int] = Counter()
+    method_counter: Counter[str] = Counter()
+    ip_counter: Counter[str] = Counter()
+    path_counter: Counter[str] = Counter()
+
+    with path.open("r", encoding="utf-8", errors="replace") as file:
+        for line in file:
+            total_lines += 1
+
+            entry = parse_line(line)
+
+            if entry is None:
+                failed_lines += 1
+                continue
+
+            parsed_lines += 1
+
+            status_counter[entry.status] += 1
+            method_counter[entry.method] += 1
+            ip_counter[entry.ip] += 1
+            path_counter[entry.path] += 1
+
+    return {
+        "total_lines": total_lines,
+        "parsed_lines": parsed_lines,
+        "failed_lines": failed_lines,
+        "status_codes": status_counter,
+        "methods": method_counter,
+        "top_ips": ip_counter,
+        "top_paths": path_counter,
+        "top_limit": top_limit,
+    }
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -224,7 +262,7 @@ def main() -> int:
         print(f"Error: path is not a file: {log_path}")
         return 1
 
-    result = analyze_parsing(log_path)
+    result = analyze_basic_stats(log_path)
 
     print()
     print("Nginx Access Log Parser")
@@ -233,9 +271,28 @@ def main() -> int:
     print(f"Total lines: {result['total_lines']}")
     print(f"Parsed lines: {result['parsed_lines']}")
     print(f"Failed lines: {result['failed_lines']}")
-    print()
 
-    return 0
+    print()
+    print("Top IP addresses:")
+    for ip, count in result["top_ips"].most_common(10):
+        print(f"  {ip}: {count} requests")
+
+    print()
+    print("HTTP status codes:")
+    for status, count in result["status_codes"].most_common():
+        print(f"  {status}: {count}")
+
+    print()
+    print("HTTP methods:")
+    for method, count in result["methods"].most_common():
+        print(f"  {method}: {count}")
+
+    print()
+    print("Top requested paths:")
+    for path, count in result["top_paths"].most_common(10):
+        print(f"  {path}: {count} requests")
+
+    print()
 
 if __name__ == "__main__":
     raise SystemExit(main())
