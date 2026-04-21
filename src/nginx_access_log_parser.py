@@ -58,6 +58,85 @@ class LogEntry:
     user_agent: str
     raw_line: str
 
+@dataclass
+class SuspiciousEvent:
+    ip: str
+    time: Optional[str]
+    method: str
+    path: str
+    status: int
+    reason: str
+    user_agent: str
+    raw_line: str
+
+SUSPICIOUS_PATH_KEYWORDS = [
+    "/.env",
+    "/.git",
+    "/.svn",
+    "/.hg",
+    "/wp-login.php",
+    "/wp-admin",
+    "/xmlrpc.php",
+    "/phpmyadmin",
+    "/pma",
+    "/admin",
+    "/administrator",
+    "/login",
+    "/config",
+    "/backup",
+    "/backups",
+    "/db.sql",
+    "/dump.sql",
+    "/database.sql",
+    "/server-status",
+    "/actuator",
+    "/actuator/env",
+    "/actuator/health",
+    "/debug",
+    "/console",
+    "/shell",
+    "/cmd",
+    "/vendor/phpunit",
+    "/cgi-bin",
+    "/boaform",
+    "/HNAP1",
+]
+
+SUSPICIOUS_EXTENSIONS = [
+    ".sql",
+    ".bak",
+    ".old",
+    ".backup",
+    ".zip",
+    ".tar",
+    ".tar.gz",
+    ".tgz",
+    ".rar",
+    ".7z",
+    ".env",
+    ".ini",
+    ".conf",
+    ".log",
+]
+
+SUSPICIOUS_USER_AGENT_KEYWORDS = [
+    "sqlmap",
+    "nikto",
+    "nmap",
+    "masscan",
+    "zgrab",
+    "dirbuster",
+    "gobuster",
+    "ffuf",
+    "acunetix",
+    "nessus",
+    "openvas",
+    "wpscan",
+    "python-requests",
+    "curl",
+    "wget",
+]
+
 def count_lines(path: Path) -> int:
     total_lines = 0
 
@@ -187,6 +266,29 @@ def open_log_file(path: Path) -> Iterable[str]:
             for line in file:
                 yield line
 
+def is_suspicious_path(path: str) -> Optional[str]:
+    path_lower = path.lower()
+
+    for keyword in SUSPICIOUS_PATH_KEYWORDS:
+        if keyword.lower() in path_lower:
+            return f"suspicious path keyword: {keyword}"
+
+    for extension in SUSPICIOUS_EXTENSIONS:
+        if path_lower.endswith(extension.lower()):
+            return f"suspicious file extension: {extension}"
+
+    return None
+
+
+def is_suspicious_user_agent(user_agent: str) -> Optional[str]:
+    user_agent_lower = user_agent.lower()
+
+    for keyword in SUSPICIOUS_USER_AGENT_KEYWORDS:
+        if keyword.lower() in user_agent_lower:
+            return f"suspicious user-agent: {keyword}"
+
+    return None
+
 def analyze_parsing(path: Path) -> dict[str, int]:
     total_lines = 0
     parsed_lines = 0
@@ -218,23 +320,60 @@ def analyze_basic_stats(path: Path, top_limit: int = 10) -> dict[str, object]:
     method_counter: Counter[str] = Counter()
     ip_counter: Counter[str] = Counter()
     path_counter: Counter[str] = Counter()
+    user_agent_counter: Counter[str] = Counter()
 
-    with path.open("r", encoding="utf-8", errors="replace") as file:
-        for line in open_log_file(path):
-            total_lines += 1
+    suspicious_events: list[SuspiciousEvent] = []
+    suspicious_ip_counter: Counter[str] = Counter()
 
-            entry = parse_line(line)
+    for line in open_log_file(path):
+        total_lines += 1
 
-            if entry is None:
-                failed_lines += 1
-                continue
+        entry = parse_line(line)
 
-            parsed_lines += 1
+        if entry is None:
+            failed_lines += 1
+            continue
 
-            status_counter[entry.status] += 1
-            method_counter[entry.method] += 1
-            ip_counter[entry.ip] += 1
-            path_counter[entry.path] += 1
+        parsed_lines += 1
+
+        status_counter[entry.status] += 1
+        method_counter[entry.method] += 1
+        ip_counter[entry.ip] += 1
+        path_counter[entry.path] += 1
+        user_agent_counter[entry.user_agent] += 1
+
+        path_reason = is_suspicious_path(entry.path)
+        ua_reason = is_suspicious_user_agent(entry.user_agent)
+
+        if path_reason:
+            suspicious_ip_counter[entry.ip] += 1
+            suspicious_events.append(
+                SuspiciousEvent(
+                    ip=entry.ip,
+                    time=entry.time_iso,
+                    method=entry.method,
+                    path=entry.path,
+                    status=entry.status,
+                    reason=path_reason,
+                    user_agent=entry.user_agent,
+                    raw_line=entry.raw_line,
+                )
+            )
+
+        if ua_reason:
+            suspicious_ip_counter[entry.ip] += 1
+            suspicious_events.append(
+                SuspiciousEvent(
+                    ip=entry.ip,
+                    time=entry.time_iso,
+                    method=entry.method,
+                    path=entry.path,
+                    status=entry.status,
+                    reason=ua_reason,
+                    user_agent=entry.user_agent,
+                    raw_line=entry.raw_line,
+                )
+            )
 
     return {
         "total_lines": total_lines,
@@ -244,6 +383,9 @@ def analyze_basic_stats(path: Path, top_limit: int = 10) -> dict[str, object]:
         "methods": method_counter,
         "top_ips": ip_counter,
         "top_paths": path_counter,
+        "top_user_agents": user_agent_counter,
+        "suspicious_events": suspicious_events,
+        "suspicious_ips": suspicious_ip_counter,
         "top_limit": top_limit,
     }
 
