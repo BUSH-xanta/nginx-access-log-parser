@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import re
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -61,6 +62,66 @@ def parse_line_raw(line: str) -> Optional[dict[str, str]]:
         return None
 
     return match.groupdict()
+
+def parse_nginx_time(value: str) -> Optional[str]:
+    """
+    Convert Nginx time format to ISO format.
+
+    Example:
+        21/Apr/2026:18:12:45 +0300
+        2026-04-21T18:12:45+03:00
+    """
+    try:
+        parsed = datetime.strptime(value, "%d/%b/%Y:%H:%M:%S %z")
+        return parsed.isoformat()
+    except ValueError:
+        return None
+
+
+def parse_request(value: str) -> tuple[str, str, str]:
+    """
+    Parse HTTP request from Nginx access log.
+
+    Examples:
+        GET /index.html HTTP/1.1
+        POST /login HTTP/2.0
+        -
+    """
+    if not value or value == "-":
+        return "-", "-", "-"
+
+    parts = value.split()
+
+    if len(parts) == 3:
+        return parts[0], parts[1], parts[2]
+
+    if len(parts) == 2:
+        return parts[0], parts[1], "-"
+
+    if len(parts) == 1:
+        return parts[0], "-", "-"
+
+    method = parts[0]
+    protocol = parts[-1]
+    path = " ".join(parts[1:-1])
+
+    return method, path, protocol
+
+
+def parse_size(value: str) -> int:
+    """
+    Convert response size to integer.
+
+    Nginx can store empty size as "-".
+    """
+    if value == "-" or value == "":
+        return 0
+
+    try:
+        return int(value)
+    except ValueError:
+        return 0
+
 
 def analyze_parsing(path: Path) -> dict[str, int]:
     total_lines = 0
