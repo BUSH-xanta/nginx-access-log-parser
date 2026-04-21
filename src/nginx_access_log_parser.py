@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import re
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -41,6 +42,20 @@ NGINX_COMMON_LOG_PATTERN = re.compile(
     r'(?P<size>\S+)'
 )
 
+@dataclass
+class LogEntry:
+    ip: str
+    time_raw: str
+    time_iso: Optional[str]
+    method: str
+    path: str
+    protocol: str
+    status: int
+    size: int
+    referer: str
+    user_agent: str
+    raw_line: str
+
 def count_lines(path: Path) -> int:
     total_lines = 0
 
@@ -62,6 +77,41 @@ def parse_line_raw(line: str) -> Optional[dict[str, str]]:
         return None
 
     return match.groupdict()
+
+def parse_line(line: str) -> Optional[LogEntry]:
+    line = line.rstrip("\n")
+
+    match = NGINX_COMBINED_LOG_PATTERN.match(line)
+
+    if not match:
+        match = NGINX_COMMON_LOG_PATTERN.match(line)
+
+    if not match:
+        return None
+
+    data = match.groupdict()
+
+    method, path, protocol = parse_request(data.get("request", "-"))
+
+    referer = data.get("referer") or "-"
+    user_agent = data.get("user_agent") or "-"
+
+    time_raw = data["time"]
+    time_iso = parse_nginx_time(time_raw)
+
+    return LogEntry(
+        ip=data["ip"],
+        time_raw=time_raw,
+        time_iso=time_iso,
+        method=method,
+        path=path,
+        protocol=protocol,
+        status=int(data["status"]),
+        size=parse_size(data["size"]),
+        referer=referer,
+        user_agent=user_agent,
+        raw_line=line,
+    )
 
 def parse_nginx_time(value: str) -> Optional[str]:
     """
@@ -132,7 +182,7 @@ def analyze_parsing(path: Path) -> dict[str, int]:
         for line in file:
             total_lines += 1
 
-            parsed = parse_line_raw(line)
+            parsed = parse_line(line)
 
             if parsed is None:
                 failed_lines += 1
