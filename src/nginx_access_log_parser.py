@@ -14,12 +14,13 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import gzip
 import re
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Iterable, Optional
 
 NGINX_COMBINED_LOG_PATTERN = re.compile(
     r'(?P<ip>\S+) '
@@ -173,6 +174,18 @@ def parse_size(value: str) -> int:
     except ValueError:
         return 0
 
+def open_log_file(path: Path) -> Iterable[str]:
+    """
+    Open plain text log files and gzipped log archives.
+    """
+    if path.suffix == ".gz":
+        with gzip.open(path, "rt", encoding="utf-8", errors="replace") as file:
+            for line in file:
+                yield line
+    else:
+        with path.open("r", encoding="utf-8", errors="replace") as file:
+            for line in file:
+                yield line
 
 def analyze_parsing(path: Path) -> dict[str, int]:
     total_lines = 0
@@ -180,7 +193,7 @@ def analyze_parsing(path: Path) -> dict[str, int]:
     failed_lines = 0
 
     with path.open("r", encoding="utf-8", errors="replace") as file:
-        for line in file:
+        for line in open_log_file(path):
             total_lines += 1
 
             parsed = parse_line(line)
@@ -207,7 +220,7 @@ def analyze_basic_stats(path: Path, top_limit: int = 10) -> dict[str, object]:
     path_counter: Counter[str] = Counter()
 
     with path.open("r", encoding="utf-8", errors="replace") as file:
-        for line in file:
+        for line in open_log_file(path):
             total_lines += 1
 
             entry = parse_line(line)
