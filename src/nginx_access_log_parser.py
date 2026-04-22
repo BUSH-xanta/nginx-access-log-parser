@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import gzip
+import json
 import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass, asdict
@@ -490,6 +491,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     return parser
 
+def write_json_report(result: AnalysisResult, output_path: Path) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with output_path.open("w", encoding="utf-8") as file:
+        json.dump(asdict(result), file, ensure_ascii=False, indent=2)
+
 def main() -> int:
     parser = build_arg_parser()
     args = parser.parse_args()
@@ -582,6 +589,10 @@ def main() -> int:
             )
 
     print()
+
+    json_report_path = Path("reports/nginx-access-report.json")
+    write_json_report(result, json_report_path)
+    print(f"JSON report saved: {json_report_path}")
 
     return 0
 
