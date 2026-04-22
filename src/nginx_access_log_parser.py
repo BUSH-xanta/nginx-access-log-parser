@@ -14,6 +14,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import csv
 import gzip
 import json
 import re
@@ -497,6 +498,27 @@ def write_json_report(result: AnalysisResult, output_path: Path) -> None:
     with output_path.open("w", encoding="utf-8") as file:
         json.dump(asdict(result), file, ensure_ascii=False, indent=2)
 
+def write_csv_suspicious_events(result: AnalysisResult, output_path: Path) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    fieldnames = [
+        "ip",
+        "time",
+        "method",
+        "path",
+        "status",
+        "reason",
+        "user_agent",
+        "raw_line",
+    ]
+
+    with output_path.open("w", encoding="utf-8", newline="") as file:
+        writer = csv.DictWriter(file, fieldnames=fieldnames)
+        writer.writeheader()
+
+        for event in result.suspicious_events:
+            writer.writerow(event)
+
 def main() -> int:
     parser = build_arg_parser()
     args = parser.parse_args()
@@ -593,6 +615,10 @@ def main() -> int:
     json_report_path = Path("reports/nginx-access-report.json")
     write_json_report(result, json_report_path)
     print(f"JSON report saved: {json_report_path}")
+
+    csv_report_path = Path("reports/suspicious-events.csv")
+    write_csv_suspicious_events(result, csv_report_path)
+    print(f"CSV suspicious events saved: {csv_report_path}")
 
     return 0
 
