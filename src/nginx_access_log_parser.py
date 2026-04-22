@@ -490,13 +490,50 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Path to Nginx access.log file. Supports plain .log and .gz files.",
     )
 
+    parser.add_argument(
+        "--top",
+        type=int,
+        default=10,
+        help="Number of top items to include in summary. Default: 10.",
+    )
+
+    parser.add_argument(
+        "--markdown",
+        default="reports/nginx-access-report.md",
+        help="Path to Markdown report output. Default: reports/nginx-access-report.md.",
+    )
+
+    parser.add_argument(
+        "--json",
+        default="reports/nginx-access-report.json",
+        help="Path to JSON report output. Default: reports/nginx-access-report.json.",
+    )
+
+    parser.add_argument(
+        "--csv",
+        default="reports/suspicious-events.csv",
+        help="Path to CSV suspicious events output. Default: reports/suspicious-events.csv.",
+    )
+
+    parser.add_argument(
+        "--no-markdown",
+        action="store_true",
+        help="Do not create Markdown report.",
+    )
+
+    parser.add_argument(
+        "--no-json",
+        action="store_true",
+        help="Do not create JSON report.",
+    )
+
+    parser.add_argument(
+        "--no-csv",
+        action="store_true",
+        help="Do not create CSV report.",
+    )
+
     return parser
-
-def write_json_report(result: AnalysisResult, output_path: Path) -> None:
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    with output_path.open("w", encoding="utf-8") as file:
-        json.dump(asdict(result), file, ensure_ascii=False, indent=2)
 
 def write_csv_suspicious_events(result: AnalysisResult, output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -539,6 +576,11 @@ def markdown_table(headers: list[str], rows: list[list[object]]) -> str:
 
     return "\n".join([header_line, separator_line, *row_lines]) + "\n"
 
+def write_json_report(result: AnalysisResult, output_path: Path) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with output_path.open("w", encoding="utf-8") as file:
+        json.dump(asdict(result), file, ensure_ascii=False, indent=2)
 
 def write_markdown_report(result: AnalysisResult, output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -676,7 +718,11 @@ def main() -> int:
         print(f"Error: path is not a file: {log_path}")
         return 1
 
-    result = analyze_log(log_path)
+    if args.top < 1:
+        print("Error: --top must be greater than 0")
+        return 1
+
+    result = analyze_log(log_path, top_limit=args.top)
 
     print()
     print("Nginx Access Log Parser")
@@ -692,7 +738,7 @@ def main() -> int:
 
     print()
     print("Top IP addresses:")
-    for item in result.top_ips[:10]:
+    for item in result.top_ips[:args.top]:
         print(f"  {item['ip']}: {item['requests']} requests")
 
     print()
@@ -707,12 +753,12 @@ def main() -> int:
 
     print()
     print("Top requested paths:")
-    for item in result.top_paths[:10]:
+    for item in result.top_paths[:args.top]:
         print(f"  {item['path']}: {item['requests']} requests")
 
     print()
     print("Top User-Agents:")
-    for item in result.top_user_agents[:10]:
+    for item in result.top_user_agents[:args.top]:
         print(f"  {item['user_agent']}: {item['requests']} requests")
 
     print()
@@ -720,7 +766,7 @@ def main() -> int:
     if not result.suspicious_ips:
         print("  No suspicious IPs found")
     else:
-        for item in result.suspicious_ips[:10]:
+        for item in result.suspicious_ips[:args.top]:
             print(
                 f"  {item['ip']}: "
                 f"{item['events']} suspicious events, "
@@ -732,7 +778,7 @@ def main() -> int:
     if not result.not_found_ips:
         print("  No 404 responses found")
     else:
-        for item in result.not_found_ips:
+        for item in result.not_found_ips[:args.top]:
             print(
                 f"  {item['ip']}: "
                 f"{item['not_found_count']} 404 responses, "
@@ -745,7 +791,7 @@ def main() -> int:
     if not result.forbidden_ips:
         print("  No 403 responses found")
     else:
-        for item in result.forbidden_ips:
+        for item in result.forbidden_ips[:args.top]:
             print(
                 f"  {item['ip']}: "
                 f"{item['forbidden_count']} 403 responses, "
@@ -755,17 +801,20 @@ def main() -> int:
 
     print()
 
-    markdown_report_path = Path("reports/nginx-access-report.md")
-    write_markdown_report(result, markdown_report_path)
-    print(f"Markdown report saved: {markdown_report_path}")
+    if not args.no_markdown:
+        markdown_report_path = Path(args.markdown)
+        write_markdown_report(result, markdown_report_path)
+        print(f"Markdown report saved: {markdown_report_path}")
 
-    json_report_path = Path("reports/nginx-access-report.json")
-    write_json_report(result, json_report_path)
-    print(f"JSON report saved: {json_report_path}")
+    if not args.no_json:
+        json_report_path = Path(args.json)
+        write_json_report(result, json_report_path)
+        print(f"JSON report saved: {json_report_path}")
 
-    csv_report_path = Path("reports/suspicious-events.csv")
-    write_csv_suspicious_events(result, csv_report_path)
-    print(f"CSV suspicious events saved: {csv_report_path}")
+    if not args.no_csv:
+        csv_report_path = Path(args.csv)
+        write_csv_suspicious_events(result, csv_report_path)
+        print(f"CSV suspicious events saved: {csv_report_path}")
 
     return 0
 
