@@ -17,7 +17,7 @@ import argparse
 import gzip
 import re
 from collections import Counter, defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Iterable, Optional
@@ -68,6 +68,25 @@ class SuspiciousEvent:
     reason: str
     user_agent: str
     raw_line: str
+
+@dataclass
+class AnalysisResult:
+    log_file: str
+    total_lines: int
+    parsed_lines: int
+    failed_lines: int
+    time_start: Optional[str]
+    time_end: Optional[str]
+    total_requests: int
+    status_codes: dict[str, int]
+    methods: dict[str, int]
+    top_ips: list[dict[str, int | str]]
+    top_paths: list[dict[str, int | str]]
+    top_user_agents: list[dict[str, int | str]]
+    suspicious_events: list[dict[str, int | str | None]]
+    suspicious_ips: list[dict[str, int | str]]
+    not_found_ips: list[dict[str, int | str]]
+    forbidden_ips: list[dict[str, int | str]]
 
 SUSPICIOUS_PATH_KEYWORDS = [
     "/.env",
@@ -311,10 +330,13 @@ def analyze_parsing(path: Path) -> dict[str, int]:
         "failed_lines": failed_lines,
     }
 
-def analyze_basic_stats(path: Path, top_limit: int = 10) -> dict[str, object]:
+def analyze_log(path: Path, top_limit: int = 10) -> AnalysisResult:
     total_lines = 0
     parsed_lines = 0
     failed_lines = 0
+
+    entries: list[LogEntry] = []
+    suspicious_events: list[SuspiciousEvent] = []
 
     status_counter: Counter[int] = Counter()
     method_counter: Counter[str] = Counter()
@@ -322,9 +344,7 @@ def analyze_basic_stats(path: Path, top_limit: int = 10) -> dict[str, object]:
     path_counter: Counter[str] = Counter()
     user_agent_counter: Counter[str] = Counter()
 
-    suspicious_events: list[SuspiciousEvent] = []
     suspicious_ip_counter: Counter[str] = Counter()
-
     not_found_ip_counter: Counter[str] = Counter()
     forbidden_ip_counter: Counter[str] = Counter()
 
@@ -341,6 +361,7 @@ def analyze_basic_stats(path: Path, top_limit: int = 10) -> dict[str, object]:
             continue
 
         parsed_lines += 1
+        entries.append(entry)
 
         status_counter[entry.status] += 1
         method_counter[entry.method] += 1
@@ -389,6 +410,22 @@ def analyze_basic_stats(path: Path, top_limit: int = 10) -> dict[str, object]:
                 )
             )
 
+    time_values = sorted(
+        [entry.time_iso for entry in entries if entry.time_iso is not None]
+    )
+
+    time_start = time_values[0] if time_values else None
+    time_end = time_values[-1] if time_values else None
+
+    suspicious_ips = [
+        {
+            "ip": ip,
+            "events": count,
+            "total_requests": ip_counter[ip],
+        }
+        for ip, count in suspicious_ip_counter.most_common(top_limit)
+    ]
+
     not_found_ips = [
         {
             "ip": ip,
@@ -409,35 +446,49 @@ def analyze_basic_stats(path: Path, top_limit: int = 10) -> dict[str, object]:
         for ip, count in forbidden_ip_counter.most_common(top_limit)
     ]
 
-    return {
-        "total_lines": total_lines,
-        "parsed_lines": parsed_lines,
-        "failed_lines": failed_lines,
-        "status_codes": status_counter,
-        "methods": method_counter,
-        "top_ips": ip_counter,
-        "top_paths": path_counter,
-        "top_user_agents": user_agent_counter,
-        "suspicious_events": suspicious_events,
-        "suspicious_ips": suspicious_ip_counter,
-        "not_found_ips": not_found_ips,
-        "forbidden_ips": forbidden_ips,
-        "top_limit": top_limit,
-    }
+    return AnalysisResult(
+        log_file=str(path),
+        total_lines=total_lines,
+        parsed_lines=parsed_lines,
+        failed_lines=failed_lines,
+        time_start=time_start,
+        time_end=time_end,
+        total_requests=parsed_lines,
+        status_codes={str(key): value for key, value in status_counter.most_common()},
+        methods={key: value for key, value in method_counter.most_common()},
+        top_ips=[
+            {"ip": ip, "requests": count}
+            for ip, count in ip_counter.most_common(top_limit)
+        ],
+        top_paths=[
+            {"path": item_path, "requests": count}
+            for item_path, count in path_counter.most_common(top_limit)
+        ],
+        top_user_agents=[
+            {"user_agent": user_agent, "requests": count}
+            for user_agent, count in user_agent_counter.most_common(top_limit)
+        ],
+        suspicious_events=[
+            asdict(event)
+            for event in suspicious_events
+        ],
+        suspicious_ips=suspicious_ips,
+        not_found_ips=not_found_ips,
+        forbidden_ips=forbidden_ips,
+    )
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Analyze Nginx access.log files."
+        description="Analyze Nginx access.log files and generate security-oriented reports."
     )
 
     parser.add_argument(
         "--log",
         required=True,
-        help="Path to Nginx access.log file.",
+        help="Path to Nginx access.log file. Supports plain .log and .gz files.",
     )
 
     return parser
-
 
 def main() -> int:
     parser = build_arg_parser()
@@ -453,66 +504,63 @@ def main() -> int:
         print(f"Error: path is not a file: {log_path}")
         return 1
 
-    result = analyze_basic_stats(log_path)
+    result = analyze_log(log_path)
 
     print()
     print("Nginx Access Log Parser")
     print("=" * 32)
-    print(f"Log file: {log_path}")
-    print(f"Total lines: {result['total_lines']}")
-    print(f"Parsed lines: {result['parsed_lines']}")
-    print(f"Failed lines: {result['failed_lines']}")
+    print(f"Log file: {result.log_file}")
+    print(f"Total lines: {result.total_lines}")
+    print(f"Parsed lines: {result.parsed_lines}")
+    print(f"Failed lines: {result.failed_lines}")
+    print(f"Time start: {result.time_start}")
+    print(f"Time end: {result.time_end}")
+    print(f"Total requests: {result.total_requests}")
+    print(f"Suspicious events: {len(result.suspicious_events)}")
 
     print()
     print("Top IP addresses:")
-    for ip, count in result["top_ips"].most_common(10):
-        print(f"  {ip}: {count} requests")
+    for item in result.top_ips[:10]:
+        print(f"  {item['ip']}: {item['requests']} requests")
 
     print()
     print("HTTP status codes:")
-    for status, count in result["status_codes"].most_common():
+    for status, count in result.status_codes.items():
         print(f"  {status}: {count}")
 
     print()
     print("HTTP methods:")
-    for method, count in result["methods"].most_common():
+    for method, count in result.methods.items():
         print(f"  {method}: {count}")
 
     print()
     print("Top requested paths:")
-    for path, count in result["top_paths"].most_common(10):
-        print(f"  {path}: {count} requests")
+    for item in result.top_paths[:10]:
+        print(f"  {item['path']}: {item['requests']} requests")
 
     print()
     print("Top User-Agents:")
-    for user_agent, count in result["top_user_agents"].most_common(10):
-        print(f"  {user_agent}: {count} requests")
+    for item in result.top_user_agents[:10]:
+        print(f"  {item['user_agent']}: {item['requests']} requests")
 
     print()
     print("Suspicious IP addresses:")
-    if not result["suspicious_ips"]:
+    if not result.suspicious_ips:
         print("  No suspicious IPs found")
     else:
-        for ip, count in result["suspicious_ips"].most_common(10):
-            print(f"  {ip}: {count} suspicious events")
-
-    print()
-    print("Suspicious events:")
-    if not result["suspicious_events"]:
-        print("  No suspicious events found")
-    else:
-        for event in result["suspicious_events"][:10]:
+        for item in result.suspicious_ips[:10]:
             print(
-                f"  {event.ip} {event.method} {event.path} "
-                f"status={event.status} reason={event.reason}"
+                f"  {item['ip']}: "
+                f"{item['events']} suspicious events, "
+                f"{item['total_requests']} total requests"
             )
 
     print()
     print("IP addresses with many 404 responses:")
-    if not result["not_found_ips"]:
+    if not result.not_found_ips:
         print("  No 404 responses found")
     else:
-        for item in result["not_found_ips"]:
+        for item in result.not_found_ips:
             print(
                 f"  {item['ip']}: "
                 f"{item['not_found_count']} 404 responses, "
@@ -522,10 +570,10 @@ def main() -> int:
 
     print()
     print("IP addresses with many 403 responses:")
-    if not result["forbidden_ips"]:
+    if not result.forbidden_ips:
         print("  No 403 responses found")
     else:
-        for item in result["forbidden_ips"]:
+        for item in result.forbidden_ips:
             print(
                 f"  {item['ip']}: "
                 f"{item['forbidden_count']} 403 responses, "
