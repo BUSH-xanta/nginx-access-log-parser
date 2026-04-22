@@ -16,7 +16,7 @@ from __future__ import annotations
 import argparse
 import gzip
 import re
-from collections import Counter
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -325,6 +325,12 @@ def analyze_basic_stats(path: Path, top_limit: int = 10) -> dict[str, object]:
     suspicious_events: list[SuspiciousEvent] = []
     suspicious_ip_counter: Counter[str] = Counter()
 
+    not_found_ip_counter: Counter[str] = Counter()
+    forbidden_ip_counter: Counter[str] = Counter()
+
+    ip_404_paths: dict[str, set[str]] = defaultdict(set)
+    ip_403_paths: dict[str, set[str]] = defaultdict(set)
+
     for line in open_log_file(path):
         total_lines += 1
 
@@ -341,6 +347,14 @@ def analyze_basic_stats(path: Path, top_limit: int = 10) -> dict[str, object]:
         ip_counter[entry.ip] += 1
         path_counter[entry.path] += 1
         user_agent_counter[entry.user_agent] += 1
+
+        if entry.status == 404:
+            not_found_ip_counter[entry.ip] += 1
+            ip_404_paths[entry.ip].add(entry.path)
+
+        if entry.status == 403:
+            forbidden_ip_counter[entry.ip] += 1
+            ip_403_paths[entry.ip].add(entry.path)
 
         path_reason = is_suspicious_path(entry.path)
         ua_reason = is_suspicious_user_agent(entry.user_agent)
@@ -375,6 +389,26 @@ def analyze_basic_stats(path: Path, top_limit: int = 10) -> dict[str, object]:
                 )
             )
 
+    not_found_ips = [
+        {
+            "ip": ip,
+            "not_found_count": count,
+            "unique_404_paths": len(ip_404_paths[ip]),
+            "total_requests": ip_counter[ip],
+        }
+        for ip, count in not_found_ip_counter.most_common(top_limit)
+    ]
+
+    forbidden_ips = [
+        {
+            "ip": ip,
+            "forbidden_count": count,
+            "unique_403_paths": len(ip_403_paths[ip]),
+            "total_requests": ip_counter[ip],
+        }
+        for ip, count in forbidden_ip_counter.most_common(top_limit)
+    ]
+
     return {
         "total_lines": total_lines,
         "parsed_lines": parsed_lines,
@@ -386,6 +420,8 @@ def analyze_basic_stats(path: Path, top_limit: int = 10) -> dict[str, object]:
         "top_user_agents": user_agent_counter,
         "suspicious_events": suspicious_events,
         "suspicious_ips": suspicious_ip_counter,
+        "not_found_ips": not_found_ips,
+        "forbidden_ips": forbidden_ips,
         "top_limit": top_limit,
     }
 
@@ -448,6 +484,58 @@ def main() -> int:
         print(f"  {path}: {count} requests")
 
     print()
+    print("Top User-Agents:")
+    for user_agent, count in result["top_user_agents"].most_common(10):
+        print(f"  {user_agent}: {count} requests")
+
+    print()
+    print("Suspicious IP addresses:")
+    if not result["suspicious_ips"]:
+        print("  No suspicious IPs found")
+    else:
+        for ip, count in result["suspicious_ips"].most_common(10):
+            print(f"  {ip}: {count} suspicious events")
+
+    print()
+    print("Suspicious events:")
+    if not result["suspicious_events"]:
+        print("  No suspicious events found")
+    else:
+        for event in result["suspicious_events"][:10]:
+            print(
+                f"  {event.ip} {event.method} {event.path} "
+                f"status={event.status} reason={event.reason}"
+            )
+
+    print()
+    print("IP addresses with many 404 responses:")
+    if not result["not_found_ips"]:
+        print("  No 404 responses found")
+    else:
+        for item in result["not_found_ips"]:
+            print(
+                f"  {item['ip']}: "
+                f"{item['not_found_count']} 404 responses, "
+                f"{item['unique_404_paths']} unique paths, "
+                f"{item['total_requests']} total requests"
+            )
+
+    print()
+    print("IP addresses with many 403 responses:")
+    if not result["forbidden_ips"]:
+        print("  No 403 responses found")
+    else:
+        for item in result["forbidden_ips"]:
+            print(
+                f"  {item['ip']}: "
+                f"{item['forbidden_count']} 403 responses, "
+                f"{item['unique_403_paths']} unique paths, "
+                f"{item['total_requests']} total requests"
+            )
+
+    print()
+
+    return 0
 
 if __name__ == "__main__":
     raise SystemExit(main())
