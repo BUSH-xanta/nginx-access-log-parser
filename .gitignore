@@ -13,6 +13,7 @@ ENV/
 reports/*.md
 reports/*.json
 reports/*.csv
+reports/*.jsonl
 !reports/.gitkeep
 
 # Logs
